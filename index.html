@@ -1,0 +1,1742 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BRS — Backup & Recovery Suite</title>
+<meta name="description" content="Automated backup and recovery suite with full and differential backups, SHA-256 integrity verification, gzip compression, and a working restore engine.">
+<meta name="author" content="Samuel Tadele Refera">
+
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      colors: {
+        bg: { 950: '#08090a', 900: '#0d0e10', 850: '#121316', 800: '#17181c', 700: '#1e2025', 600: '#26282f' },
+        accent: { DEFAULT: '#5b8def', soft: '#7ba1f5' }
+      },
+      fontFamily: {
+        sans: ['Inter', 'system-ui', 'sans-serif'],
+        mono: ['JetBrains Mono', 'ui-monospace', 'monospace']
+      }
+    }
+  }
+}
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<style>
+  body { background: #08090a; color: #f7f8f8; font-family: 'Inter', system-ui, sans-serif; letter-spacing: -0.011em; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: #08090a; }
+  ::-webkit-scrollbar-thumb { background: #1e2025; border-radius: 5px; border: 2px solid #08090a; }
+  ::-webkit-scrollbar-thumb:hover { background: #26282f; }
+  ::selection { background: #5b8def; color: #08090a; }
+  .surface { background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0) 60%), #0d0e10; border: 1px solid rgba(255,255,255,0.07); }
+  .surface-hover:hover { border-color: rgba(255,255,255,0.14); }
+  .grid-backdrop { background-image: linear-gradient(to right, rgba(255,255,255,0.04) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,0.04) 1px, transparent 1px); background-size: 64px 64px; }
+  input, select, textarea { color-scheme: dark; }
+  input:focus, select:focus, textarea:focus { outline: 2px solid rgba(91,141,239,0.5); outline-offset: 0; border-color: #5b8def; }
+  .nav-item { transition: all .2s; border-left: 2px solid transparent; }
+  .nav-item:hover { background: rgba(255,255,255,0.03); color: #f7f8f8; }
+  .nav-item.active { background: rgba(91,141,239,0.10); color: #7ba1f5; border-left-color: #5b8def; }
+  @keyframes toastIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+  .toast { animation: toastIn .25s ease; }
+  @keyframes modalIn { from { opacity: 0; transform: scale(.97); } to { opacity: 1; transform: none; } }
+  .modal-panel { animation: modalIn .2s ease; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
+  .running { animation: pulse 1.4s ease-in-out infinite; }
+  table { border-collapse: separate; border-spacing: 0; }
+  th { font-weight: 500; }
+  .timeline-dot { box-shadow: 0 0 0 3px #08090a; }
+</style>
+</head>
+<body>
+
+<!-- ============ LOADING ============ -->
+<div id="loading" class="fixed inset-0 flex items-center justify-center bg-bg-950 z-50">
+  <div class="text-center">
+    <div class="w-10 h-10 border-2 border-white/10 border-t-accent rounded-full animate-spin mx-auto"></div>
+    <p class="mt-4 text-sm text-stone-500 font-mono">Initializing backup engine…</p>
+  </div>
+</div>
+
+<!-- ============ LOGIN ============ -->
+<div id="loginScreen" class="hidden fixed inset-0 grid-backdrop items-center justify-center p-6 z-40">
+  <div class="w-full max-w-md">
+    <div class="text-center mb-8">
+      <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-accent to-[#8b7cff] flex items-center justify-center mx-auto mb-5">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#08090a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12a9 9 0 1 1-3-6.7L21 8"/>
+          <path d="M21 3v5h-5"/>
+        </svg>
+      </div>
+      <h1 class="text-2xl font-semibold tracking-tight">Backup &amp; Recovery Suite</h1>
+      <p class="text-sm text-stone-500 mt-2">Sign in to continue</p>
+    </div>
+
+    <form id="loginForm" class="surface rounded-2xl p-7 space-y-5">
+      <div>
+        <label class="block text-[11px] font-mono uppercase tracking-widest text-stone-500 mb-2">Username</label>
+        <input id="loginUser" type="text" required autocomplete="username" class="w-full bg-white/[0.02] border border-white/[0.08] rounded-lg px-3.5 py-2.5 text-sm text-stone-100 outline-none">
+      </div>
+      <div>
+        <label class="block text-[11px] font-mono uppercase tracking-widest text-stone-500 mb-2">Password</label>
+        <input id="loginPass" type="password" required autocomplete="current-password" class="w-full bg-white/[0.02] border border-white/[0.08] rounded-lg px-3.5 py-2.5 text-sm text-stone-100 outline-none">
+      </div>
+      <button type="submit" class="w-full bg-white hover:bg-stone-200 text-black font-medium py-2.5 rounded-lg text-sm transition-colors">Sign in</button>
+      <p id="loginError" class="hidden text-xs text-red-400 text-center"></p>
+    </form>
+
+    <div class="mt-6 surface rounded-xl p-4">
+      <div class="text-[11px] font-mono uppercase tracking-widest text-stone-500 mb-3">Demo accounts</div>
+      <div class="space-y-2 text-xs">
+        <button type="button" data-fill="admin:admin123" class="w-full flex justify-between items-center px-3 py-2 rounded-md hover:bg-white/[0.04] transition-colors text-left">
+          <span class="text-stone-300 font-mono">admin / admin123</span>
+          <span class="text-[10px] font-mono text-amber-400/90 uppercase tracking-wider">Admin</span>
+        </button>
+        <button type="button" data-fill="operator:op123" class="w-full flex justify-between items-center px-3 py-2 rounded-md hover:bg-white/[0.04] transition-colors text-left">
+          <span class="text-stone-300 font-mono">operator / op123</span>
+          <span class="text-[10px] font-mono text-accent-soft uppercase tracking-wider">Operator</span>
+        </button>
+        <button type="button" data-fill="viewer:view123" class="w-full flex justify-between items-center px-3 py-2 rounded-md hover:bg-white/[0.04] transition-colors text-left">
+          <span class="text-stone-300 font-mono">viewer / view123</span>
+          <span class="text-[10px] font-mono text-stone-500 uppercase tracking-wider">Read-only</span>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ APP SHELL ============ -->
+<div id="app" class="hidden min-h-screen">
+
+  <aside class="fixed top-0 left-0 bottom-0 w-60 bg-bg-900 border-r border-white/[0.06] flex flex-col z-30">
+    <div class="h-14 flex items-center px-5 border-b border-white/[0.06]">
+      <div class="w-7 h-7 rounded-lg bg-gradient-to-br from-accent to-[#8b7cff] flex items-center justify-center flex-shrink-0">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#08090a" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/>
+        </svg>
+      </div>
+      <div class="ml-2.5">
+        <div class="text-[13px] font-semibold leading-tight">BRS</div>
+        <div class="text-[10px] text-stone-500 font-mono leading-tight">v1.0</div>
+      </div>
+    </div>
+    <nav id="nav" class="flex-1 py-3 space-y-0.5 overflow-y-auto"></nav>
+    <div class="p-3 border-t border-white/[0.06]">
+      <div id="userCard" class="surface rounded-lg p-3"></div>
+    </div>
+  </aside>
+
+  <div class="ml-60">
+    <header class="h-14 border-b border-white/[0.06] bg-bg-950/70 backdrop-blur-xl sticky top-0 z-20">
+      <div class="h-full px-6 flex items-center justify-between">
+        <div id="breadcrumb" class="text-[13px] text-stone-500"></div>
+        <div class="flex items-center gap-3">
+          <span id="storageIndicator" class="text-[11px] font-mono text-stone-500"></span>
+          <button id="resetAllBtn" class="text-[12px] text-stone-500 hover:text-red-400 transition-colors inline-flex items-center gap-1.5">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>
+            Reset all data
+          </button>
+        </div>
+      </div>
+    </header>
+    <main id="main" class="p-6 lg:p-8 max-w-7xl"></main>
+  </div>
+</div>
+
+<div id="modalRoot" class="hidden fixed inset-0 z-40 bg-black/70 backdrop-blur-sm items-center justify-center p-4"></div>
+<div id="toastRoot" class="fixed bottom-6 right-6 z-50 space-y-2"></div>
+
+<script>
+/* ============================================================================
+   BRS — Backup & Recovery Suite
+   Demonstrates: real SHA-256 hashing, gzip compression, differential backups,
+   integrity verification, restore engine, retention policy, activity logging.
+   ============================================================================ */
+
+/* ========== UTILITIES ========== */
+const U = {
+  esc(s) {
+    if (s === null || s === undefined) return '';
+    return String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+  },
+  bytes(n) {
+    if (n === 0) return '0 B';
+    if (n < 1024) return n + ' B';
+    if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+    if (n < 1073741824) return (n / 1048576).toFixed(2) + ' MB';
+    return (n / 1073741824).toFixed(2) + ' GB';
+  },
+  time(ts) {
+    const d = new Date(ts);
+    const now = Date.now();
+    const diff = Math.floor((now - ts) / 1000);
+    if (diff < 60) return 'just now';
+    if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+    if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+    if (diff < 604800) return Math.floor(diff / 86400) + 'd ago';
+    return d.toISOString().slice(0, 10);
+  },
+  date(ts) {
+    return new Date(ts).toISOString().slice(0, 16).replace('T', ' ');
+  },
+  uid() {
+    return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  },
+  shortHash(h) {
+    return h ? h.slice(0, 10) + '…' + h.slice(-6) : '—';
+  }
+};
+
+/* ========== CRYPTO + COMPRESSION ========== */
+const C = {
+  async sha256(str) {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+  },
+  async gzip(str) {
+    const input = new TextEncoder().encode(str);
+    if (typeof CompressionStream === 'undefined') {
+      return { bytes: input, size: input.length, compressed: false };
+    }
+    const cs = new CompressionStream('gzip');
+    const writer = cs.writable.getWriter();
+    writer.write(input);
+    writer.close();
+    const blob = await new Response(cs.readable).blob();
+    const buf = await blob.arrayBuffer();
+    return { bytes: new Uint8Array(buf), size: buf.byteLength, compressed: true };
+  },
+  async gunzip(bytes, wasCompressed) {
+    if (!wasCompressed || typeof DecompressionStream === 'undefined') {
+      return new TextDecoder().decode(bytes);
+    }
+    const ds = new DecompressionStream('gzip');
+    const writer = ds.writable.getWriter();
+    writer.write(bytes);
+    writer.close();
+    const blob = await new Response(ds.readable).blob();
+    return await blob.text();
+  },
+  b64encode(bytes) {
+    let s = '';
+    for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+    return btoa(s);
+  },
+  b64decode(str) {
+    const bin = atob(str);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes;
+  }
+};
+
+/* ========== STORAGE ========== */
+const Store = {
+  KEY: 'brs_state_v1',
+  load() {
+    try {
+      const raw = localStorage.getItem(this.KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
+  },
+  save(state) {
+    try {
+      localStorage.setItem(this.KEY, JSON.stringify(state));
+      return true;
+    } catch (e) {
+      if (e.name === 'QuotaExceededError') {
+        UI.toast('Storage quota exceeded — delete older backups', 'error');
+      } else {
+        UI.toast('Failed to save state: ' + e.message, 'error');
+      }
+      return false;
+    }
+  },
+  clear() { localStorage.removeItem(this.KEY); }
+};
+
+/* ========== MOCK DATA GENERATORS ========== */
+const Generators = {
+  customers(n) {
+    const first = ['Abebe','Sara','Dawit','Hana','Yohannes','Meron','Samuel','Ruth','Kalkidan','Bereket','Tigist','Firaol'];
+    const last = ['Bekele','Tadesse','Haile','Girma','Tesfaye','Assefa','Mekonnen','Alemayehu','Solomon','Mulugeta','Desta','Lemma'];
+    const cities = ['Addis Ababa','Adama','Woliso','Hawassa','Bahir Dar','Mekelle','Dire Dawa','Jimma'];
+    const rows = [];
+    for (let i = 1; i <= n; i++) {
+      rows.push({
+        id: i,
+        name: first[i % first.length] + ' ' + last[(i * 3) % last.length],
+        email: 'customer' + i + '@example.com',
+        city: cities[i % cities.length],
+        balance: Math.round((Math.random() * 5000 + 100) * 100) / 100,
+        created_at: new Date(Date.now() - i * 86400000).toISOString().slice(0, 10)
+      });
+    }
+    return rows;
+  },
+  orders(n) {
+    const statuses = ['pending','shipped','delivered','cancelled','returned'];
+    const rows = [];
+    for (let i = 1; i <= n; i++) {
+      rows.push({
+        id: i,
+        customer_id: 1 + (i * 7) % 300,
+        amount: Math.round((Math.random() * 800 + 20) * 100) / 100,
+        status: statuses[i % statuses.length],
+        placed_at: new Date(Date.now() - i * 3600000).toISOString().slice(0, 10)
+      });
+    }
+    return rows;
+  },
+  inventory(n) {
+    const cats = ['Electronics','Books','Furniture','Clothing','Food','Tools','Toys','Sports'];
+    const rows = [];
+    for (let i = 1; i <= n; i++) {
+      rows.push({
+        id: i,
+        sku: 'SKU-' + String(i).padStart(5, '0'),
+        name: 'Product ' + i,
+        category: cats[i % cats.length],
+        quantity: Math.floor(Math.random() * 500),
+        price: Math.round((Math.random() * 200 + 5) * 100) / 100
+      });
+    }
+    return rows;
+  }
+};
+
+/* ========== STATE ========== */
+const State = {
+  sources: [],   // { id, name, type, rows: [], lastModified, unbackedChanges, dataHash }
+  backups: [],   // { id, sourceId, type, parentId, createdAt, rawSize, compressedSize, compressed, contentB64, checksum, rows, status, log }
+  schedules: [], // { id, sourceId, type, interval, retention, enabled, lastRun, nextRun }
+  log: [],       // { id, ts, level, category, message }
+  users: [],     // { username, passwordHash, role, displayName }
+  storageWarning: false
+};
+
+/* ========== LOGGING ========== */
+const Log = {
+  add(level, category, message) {
+    State.log.unshift({
+      id: U.uid(),
+      ts: Date.now(),
+      level,
+      category,
+      message
+    });
+    if (State.log.length > 500) State.log = State.log.slice(0, 500);
+    Store.save(State);
+  },
+  info(cat, msg) { this.add('info', cat, msg); },
+  warn(cat, msg) { this.add('warn', cat, msg); },
+  error(cat, msg) { this.add('error', cat, msg); },
+  success(cat, msg) { this.add('success', cat, msg); }
+};
+
+/* ========== SOURCES MODULE ========== */
+const Sources = {
+  init() {
+    State.sources = [
+      { id: 'src_customers', name: 'Customers', type: 'customers', rows: Generators.customers(300), lastModified: Date.now() - 3600000 * 24, unbackedChanges: 0 },
+      { id: 'src_orders',    name: 'Orders',    type: 'orders',    rows: Generators.orders(800),    lastModified: Date.now() - 3600000 * 12, unbackedChanges: 0 },
+      { id: 'src_inventory', name: 'Inventory', type: 'inventory', rows: Generators.inventory(200), lastModified: Date.now() - 3600000 * 6,  unbackedChanges: 0 }
+    ];
+  },
+
+  get(id) { return State.sources.find(s => s.id === id); },
+
+  async mutate(id, count = 5) {
+    const src = this.get(id);
+    if (!src) return;
+    const before = src.rows.length;
+    let added = 0, removed = 0, modified = 0;
+
+    // Determine next id
+    const maxId = src.rows.reduce((m, r) => Math.max(m, r.id || 0), 0);
+
+    // Modified
+    for (let i = 0; i < Math.ceil(count / 2); i++) {
+      const idx = Math.floor(Math.random() * src.rows.length);
+      const row = src.rows[idx];
+      if (!row) continue;
+      if (row.balance !== undefined) row.balance = Math.round(row.balance * (0.9 + Math.random() * 0.2) * 100) / 100;
+      if (row.amount !== undefined) row.amount = Math.round(row.amount * (0.9 + Math.random() * 0.2) * 100) / 100;
+      if (row.quantity !== undefined) row.quantity = Math.max(0, row.quantity + Math.floor(Math.random() * 40 - 20));
+      if (row.status !== undefined) {
+        const opts = ['pending','shipped','delivered','cancelled','returned'];
+        row.status = opts[Math.floor(Math.random() * opts.length)];
+      }
+      modified++;
+    }
+
+    // Added
+    const toAdd = Math.floor(Math.random() * 3) + 1;
+    for (let i = 0; i < toAdd; i++) {
+      const nextId = maxId + i + 1;
+      if (src.type === 'customers') {
+        src.rows.push({ id: nextId, name: 'New Customer ' + nextId, email: 'new' + nextId + '@example.com', city: 'Adama', balance: 0, created_at: new Date().toISOString().slice(0, 10) });
+      } else if (src.type === 'orders') {
+        src.rows.push({ id: nextId, customer_id: 1 + (nextId * 7) % 300, amount: Math.round(Math.random() * 800 * 100) / 100, status: 'pending', placed_at: new Date().toISOString().slice(0, 10) });
+      } else {
+        src.rows.push({ id: nextId, sku: 'SKU-' + String(nextId).padStart(5, '0'), name: 'New Product ' + nextId, category: 'Electronics', quantity: 50, price: 99.99 });
+      }
+      added++;
+    }
+
+    // Removed (randomly)
+    const toRemove = Math.floor(Math.random() * 2);
+    for (let i = 0; i < toRemove && src.rows.length > 10; i++) {
+      const idx = Math.floor(Math.random() * src.rows.length);
+      src.rows.splice(idx, 1);
+      removed++;
+    }
+
+    src.lastModified = Date.now();
+    src.unbackedChanges += added + removed + modified;
+    Log.info('sources', `${src.name}: ${added} added, ${modified} modified, ${removed} removed`);
+    Store.save(State);
+    return { added, removed, modified, before, after: src.rows.length };
+  },
+
+  async currentHash(id) {
+    const src = this.get(id);
+    if (!src) return '';
+    return await C.sha256(JSON.stringify(src.rows));
+  },
+
+  totalRows() {
+    return State.sources.reduce((s, x) => s + x.rows.length, 0);
+  }
+};
+
+/* ========== BACKUPS MODULE ========== */
+const Backups = {
+
+  get(id) { return State.backups.find(b => b.id === id); },
+  forSource(srcId) { return State.backups.filter(b => b.sourceId === srcId).sort((a, b) => b.createdAt - a.createdAt); },
+  all() { return [...State.backups].sort((a, b) => b.createdAt - a.createdAt); },
+
+  /* Create a backup. type = 'full' | 'diff' */
+  async create(sourceId, type = 'full') {
+    const src = Sources.get(sourceId);
+    if (!src) throw new Error('Source not found');
+
+    // For diff, find last full backup for this source
+    let parent = null;
+    if (type === 'diff') {
+      parent = this.forSource(sourceId).find(b => b.type === 'full');
+      if (!parent) {
+        // No full exists — promote to full
+        type = 'full';
+      }
+    }
+
+    let content, rawSize, rows;
+    if (type === 'full') {
+      content = JSON.stringify({ type: 'full', rows: src.rows });
+      rows = src.rows.length;
+    } else {
+      // Differential: store base full id + current full snapshot (simplified)
+      // Real diffing would compute deltas; here we store what's needed to restore
+      const baseFull = this.get(parent.id);
+      const baseData = await this._loadContent(baseFull);
+      const baseRows = baseData.rows;
+      const baseMap = new Map(baseRows.map(r => [r.id, r]));
+      const nowMap = new Map(src.rows.map(r => [r.id, r]));
+
+      const added = src.rows.filter(r => !baseMap.has(r.id));
+      const removed = baseRows.filter(r => !nowMap.has(r.id)).map(r => r.id);
+      const modified = src.rows.filter(r => {
+        const b = baseMap.get(r.id);
+        return b && JSON.stringify(b) !== JSON.stringify(r);
+      });
+
+      content = JSON.stringify({ type: 'diff', baseId: parent.id, added, removed, modified });
+      rows = src.rows.length;
+    }
+
+    // Real SHA-256 + gzip
+    const checksum = await C.sha256(content);
+    const gz = await C.gzip(content);
+    const rawBytes = new TextEncoder().encode(content).length;
+
+    const backup = {
+      id: 'bk_' + U.uid(),
+      sourceId,
+      sourceName: src.name,
+      type,
+      parentId: parent ? parent.id : null,
+      createdAt: Date.now(),
+      rawSize: rawBytes,
+      compressedSize: gz.size,
+      compressed: gz.compressed,
+      contentB64: C.b64encode(gz.bytes),
+      checksum,
+      rows,
+      status: 'healthy'
+    };
+
+    State.backups.unshift(backup);
+    src.unbackedChanges = 0;
+
+    Log.success('backup', `${type === 'full' ? 'Full' : 'Differential'} backup of ${src.name} (${rows} rows, ${U.bytes(gz.size)})`);
+    this.prune();
+    Store.save(State);
+    return backup;
+  },
+
+  /* Decompress + parse a backup's content */
+  async _loadContent(backup) {
+    const bytes = C.b64decode(backup.contentB64);
+    const json = await C.gunzip(bytes, backup.compressed);
+    return JSON.parse(json);
+  },
+
+  /* Verify a single backup by re-hashing stored content */
+  async verify(id) {
+    const backup = this.get(id);
+    if (!backup) return { ok: false, reason: 'Not found' };
+
+    try {
+      const bytes = C.b64decode(backup.contentB64);
+      const json = await C.gunzip(bytes, backup.compressed);
+      const hash = await C.sha256(json);
+      const ok = hash === backup.checksum;
+      backup.status = ok ? 'healthy' : 'corrupted';
+      if (!ok) {
+        Log.error('verify', `Backup ${backup.id} FAILED integrity check — hash mismatch`);
+      }
+      return { ok, expected: backup.checksum, actual: hash };
+    } catch (e) {
+      backup.status = 'corrupted';
+      Log.error('verify', `Backup ${backup.id} could not be read: ${e.message}`);
+      return { ok: false, reason: e.message };
+    }
+  },
+
+  async verifyAll() {
+    const results = [];
+    for (const b of State.backups) {
+      const r = await this.verify(b.id);
+      results.push({ id: b.id, source: b.sourceName, type: b.type, ...r });
+    }
+    Store.save(State);
+    return results;
+  },
+
+  /* Restore a backup into its source */
+  async restore(id) {
+    const backup = this.get(id);
+    if (!backup) throw new Error('Backup not found');
+
+    const src = Sources.get(backup.sourceId);
+    if (!src) throw new Error('Source not found');
+
+    let finalRows;
+    if (backup.type === 'full') {
+      const data = await this._loadContent(backup);
+      finalRows = data.rows;
+    } else {
+      // Differential: load base full, then apply patches
+      const baseData = await this._loadContent(this.get(backup.parentId));
+      let baseRows = baseData.rows.slice();
+      const diffData = await this._loadContent(backup);
+
+      // Remove deleted
+      const removedSet = new Set(diffData.removed);
+      baseRows = baseRows.filter(r => !removedSet.has(r.id));
+
+      // Apply modified (replace existing)
+      const modMap = new Map(diffData.modified.map(r => [r.id, r]));
+      baseRows = baseRows.map(r => modMap.has(r.id) ? modMap.get(r.id) : r);
+
+      // Add added
+      baseRows = baseRows.concat(diffData.added);
+      finalRows = baseRows;
+    }
+
+    const beforeCount = src.rows.length;
+    src.rows = finalRows;
+    src.lastModified = Date.now();
+    src.unbackedChanges += Math.abs(finalRows.length - beforeCount) + 1;
+
+    Log.warn('restore', `Restored ${src.name} from ${backup.type} backup (${beforeCount} → ${finalRows.length} rows)`);
+    Store.save(State);
+    return { rows: finalRows.length, from: beforeCount };
+  },
+
+  /* Simulate corruption — modifies content without updating checksum */
+  async corrupt(id) {
+    const backup = this.get(id);
+    if (!backup) return;
+    const bytes = C.b64decode(backup.contentB64);
+    // Flip a few bytes
+    for (let i = 0; i < Math.min(8, bytes.length); i++) {
+      bytes[i] = bytes[i] ^ 0xFF;
+    }
+    backup.contentB64 = C.b64encode(bytes);
+    backup.status = 'suspect';
+    Log.warn('corrupt', `Simulated corruption on backup ${backup.id}`);
+    Store.save(State);
+  },
+
+  /* Delete a backup + any diffs that depend on it */
+  async delete(id) {
+    const backup = this.get(id);
+    if (!backup) return;
+
+    // Find dependents
+    const dependents = State.backups.filter(b => b.parentId === id);
+    for (const dep of dependents) {
+      await this.delete(dep.id);
+    }
+
+    State.backups = State.backups.filter(b => b.id !== id);
+    Log.warn('backup', `Deleted backup ${backup.id} (${backup.sourceName}, ${backup.type})`);
+    Store.save(State);
+  },
+
+  /* Retention: keep last N fulls per source + their diffs */
+  prune() {
+    for (const src of State.sources) {
+      const sourceBackups = this.forSource(src.id);
+      const fulls = sourceBackups.filter(b => b.type === 'full');
+      const RETENTION = 3;
+
+      if (fulls.length > RETENTION) {
+        // Oldest fulls to delete
+        const toDelete = fulls.slice(RETENTION);
+        for (const oldFull of toDelete) {
+          // Delete old full + its diffs (recursively)
+          const diffs = State.backups.filter(b => b.parentId === oldFull.id);
+          for (const d of diffs) {
+            State.backups = State.backups.filter(b => b.id !== d.id);
+          }
+          State.backups = State.backups.filter(b => b.id !== oldFull.id);
+          Log.warn('retention', `Pruned old full backup ${oldFull.id} of ${src.name}`);
+        }
+      }
+    }
+  },
+
+  /* Total disk usage across all backups */
+  totalSize() {
+    return State.backups.reduce((s, b) => s + b.compressedSize, 0);
+  },
+
+  totalRawSize() {
+    return State.backups.reduce((s, b) => s + b.rawSize, 0);
+  }
+};
+
+/* ========== SCHEDULER MODULE ========== */
+const Scheduler = {
+  init() {
+    State.schedules = [
+      { id: 'sch_1', sourceId: 'src_customers', type: 'full', interval: 'daily',    retention: 3, enabled: true,  lastRun: Date.now() - 86400000, nextRun: Date.now() + 3600000 * 23 },
+      { id: 'sch_2', sourceId: 'src_orders',    type: 'diff', interval: 'hourly',   retention: 3, enabled: true,  lastRun: Date.now() - 3600000,  nextRun: Date.now() + 3600000 * 0.9 },
+      { id: 'sch_3', sourceId: 'src_inventory', type: 'full', interval: 'weekly',   retention: 2, enabled: false, lastRun: 0,                     nextRun: 0 }
+    ];
+  },
+
+  get(id) { return State.schedules.find(s => s.id === id); },
+
+  intervalMs(interval) {
+    return { hourly: 3600000, daily: 86400000, weekly: 604800000 }[interval] || 86400000;
+  },
+
+  async runNow(id) {
+    const sch = this.get(id);
+    if (!sch) return;
+    const backup = await Backups.create(sch.sourceId, sch.type);
+    sch.lastRun = Date.now();
+    sch.nextRun = Date.now() + this.intervalMs(sch.interval);
+    Log.info('schedule', `Ran scheduled backup for ${sch.sourceId} (${sch.type})`);
+    Store.save(State);
+    return backup;
+  },
+
+  async tick() {
+    const now = Date.now();
+    for (const sch of State.schedules) {
+      if (sch.enabled && sch.nextRun && now >= sch.nextRun) {
+        try { await this.runNow(sch.id); } catch (e) { Log.error('schedule', e.message); }
+      }
+    }
+  },
+
+  toggle(id) {
+    const sch = this.get(id);
+    if (!sch) return;
+    sch.enabled = !sch.enabled;
+    if (sch.enabled && !sch.nextRun) sch.nextRun = Date.now() + this.intervalMs(sch.interval);
+    Log.info('schedule', `${sch.enabled ? 'Enabled' : 'Disabled'} schedule for ${sch.sourceId}`);
+    Store.save(State);
+  }
+};
+
+/* ========== AUTH ========== */
+const Auth = {
+  current: null,
+
+  async hash(password, salt) {
+    const data = new TextEncoder().encode(salt + '::' + password);
+    const buf = await crypto.subtle.digest('SHA-256', data);
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+  },
+
+  async initUsers() {
+    const defs = [
+      ['admin',    'admin123', 'admin',    'Administrator'],
+      ['operator', 'op123',    'operator', 'Backup Operator'],
+      ['viewer',   'view123',  'viewer',   'Read-only Guest']
+    ];
+    State.users = [];
+    for (const [u, p, role, name] of defs) {
+      State.users.push({
+        username: u,
+        passwordHash: await this.hash(p, u),
+        role,
+        displayName: name
+      });
+    }
+  },
+
+  async login(username, password) {
+    const user = State.users.find(u => u.username === username);
+    if (!user) return { ok: false, error: 'User not found' };
+    const hash = await this.hash(password, username);
+    if (hash !== user.passwordHash) return { ok: false, error: 'Incorrect password' };
+    this.current = { username: user.username, role: user.role, name: user.displayName };
+    return { ok: true };
+  },
+
+  logout() { this.current = null; },
+
+  can(action) {
+    if (!this.current) return false;
+    const r = this.current.role;
+    const perms = {
+      'backup.create':   ['admin', 'operator'],
+      'backup.delete':   ['admin'],
+      'backup.corrupt':  ['admin'],
+      'backup.verify':   ['admin', 'operator'],
+      'restore.run':     ['admin', 'operator'],
+      'source.mutate':   ['admin', 'operator'],
+      'schedule.manage': ['admin'],
+      'data.reset':      ['admin']
+    };
+    return (perms[action] || []).includes(r);
+  }
+};
+
+/* ========== UI HELPERS ========== */
+const UI = {
+  toast(message, type = 'info') {
+    const colors = {
+      info:    'border-white/10 text-stone-200',
+      success: 'border-emerald-500/30 text-emerald-300',
+      error:   'border-red-500/30 text-red-300',
+      warn:    'border-amber-500/30 text-amber-300'
+    };
+    const el = document.createElement('div');
+    el.className = 'toast surface rounded-lg px-4 py-3 text-sm max-w-xs shadow-xl border ' + colors[type];
+    el.textContent = message;
+    document.getElementById('toastRoot').appendChild(el);
+    setTimeout(() => {
+      el.style.transition = 'opacity .3s, transform .3s';
+      el.style.opacity = '0';
+      el.style.transform = 'translateY(8px)';
+      setTimeout(() => el.remove(), 300);
+    }, 3400);
+  },
+
+  modal({ title, body, footer, onMount, wide }) {
+    const root = document.getElementById('modalRoot');
+    root.innerHTML = `
+      <div class="modal-panel surface rounded-2xl w-full ${wide ? 'max-w-3xl' : 'max-w-lg'} max-h-[88vh] overflow-y-auto">
+        <div class="flex items-center justify-between p-5 border-b border-white/[0.06]">
+          <h2 class="text-base font-medium">${U.esc(title)}</h2>
+          <button data-close aria-label="Close" class="w-8 h-8 rounded-md text-stone-500 hover:text-stone-100 hover:bg-white/[0.05] flex items-center justify-center transition-colors">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 4l8 8M12 4l-8 8" stroke-linecap="round"/></svg>
+          </button>
+        </div>
+        <div class="p-5">${body}</div>
+        ${footer ? `<div class="p-5 border-t border-white/[0.06] flex justify-end gap-2">${footer}</div>` : ''}
+      </div>
+    `;
+    root.classList.remove('hidden');
+    root.classList.add('flex');
+    root.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', UI.closeModal));
+    root.addEventListener('mousedown', e => { if (e.target === root) UI.closeModal(); });
+    if (onMount) onMount(root);
+  },
+
+  closeModal() {
+    const root = document.getElementById('modalRoot');
+    root.classList.add('hidden');
+    root.classList.remove('flex');
+    root.innerHTML = '';
+  },
+
+  confirm(message, onConfirm, opts = {}) {
+    const danger = opts.danger !== false;
+    UI.modal({
+      title: opts.title || 'Confirm action',
+      body: `<p class="text-sm text-stone-300">${U.esc(message)}</p>`,
+      footer: `
+        <button data-close class="px-4 py-2 text-sm text-stone-300 hover:text-white transition-colors">Cancel</button>
+        <button id="confirmYes" class="px-4 py-2 text-sm font-medium ${danger ? 'bg-red-500 hover:bg-red-400' : 'bg-white hover:bg-stone-200 text-black'} text-white rounded-lg transition-colors">
+          ${U.esc(opts.confirmLabel || 'Delete')}
+        </button>
+      `,
+      onMount(root) {
+        root.querySelector('#confirmYes').addEventListener('click', () => {
+          UI.closeModal();
+          onConfirm();
+        });
+      }
+    });
+  },
+
+  empty(title, hint) {
+    return `
+      <div class="text-center py-16 px-6">
+        <div class="w-12 h-12 rounded-xl bg-white/[0.03] border border-white/[0.06] flex items-center justify-center mx-auto mb-4">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" class="text-stone-600">
+            <circle cx="11" cy="11" r="7"/><path d="M4 20l6-6"/>
+          </svg>
+        </div>
+        <h3 class="text-sm text-stone-300 font-medium">${U.esc(title)}</h3>
+        ${hint ? `<p class="text-xs text-stone-500 mt-1.5 max-w-sm mx-auto">${U.esc(hint)}</p>` : ''}
+      </div>
+    `;
+  },
+
+  statusBadge(status) {
+    const map = {
+      healthy:   'bg-emerald-500/10 text-emerald-300',
+      corrupted: 'bg-red-500/10 text-red-300',
+      suspect:   'bg-amber-500/10 text-amber-300'
+    };
+    return `<span class="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded ${map[status] || 'bg-white/[0.04] text-stone-400'}">${status}</span>`;
+  },
+
+  typeBadge(type) {
+    return type === 'full'
+      ? `<span class="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded border border-accent/25 bg-accent/[0.08] text-accent-soft">Full</span>`
+      : `<span class="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded border border-purple-500/25 bg-purple-500/[0.08] text-purple-300">Diff</span>`;
+  },
+
+  roleBadge(role) {
+    const map = {
+      admin:    'bg-amber-500/10 text-amber-300 border-amber-500/30',
+      operator: 'bg-accent/10 text-accent-soft border-accent/30',
+      viewer:   'bg-white/[0.04] text-stone-400 border-white/[0.10]'
+    };
+    return `<span class="text-[10px] font-mono uppercase tracking-widest px-2 py-0.5 rounded border ${map[role]}">${role}</span>`;
+  }
+};
+
+/* ========== NAV ========== */
+const NAV = [
+  { id: 'overview', label: 'Overview',  icon: '<rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/>' },
+  { id: 'sources',  label: 'Sources',   icon: '<ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/>' },
+  { id: 'backups',  label: 'Backups',   icon: '<path d="M5 3h9l5 5v13H5z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h6"/>' },
+  { id: 'restore',  label: 'Restore',   icon: '<path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/>' },
+  { id: 'verify',   label: 'Verify',    icon: '<path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="9"/>' },
+  { id: 'schedule', label: 'Schedule',  icon: '<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 10h18M8 2v4M16 2v4"/>' },
+  { id: 'log',      label: 'Activity',  icon: '<path d="M4 4h16v16H4z"/><path d="M8 8h8M8 12h8M8 16h5"/>' }
+];
+
+/* ========== VIEWS ========== */
+const Views = {
+
+  /* --------- Overview --------- */
+  overview() {
+    const totalBackups = State.backups.length;
+    const totalSources = State.sources.length;
+    const totalRaw = Backups.totalRawSize();
+    const totalComp = Backups.totalSize();
+    const ratio = totalRaw ? Math.round((1 - totalComp / totalRaw) * 100) : 0;
+    const healthy = State.backups.filter(b => b.status === 'healthy').length;
+    const lastBackup = State.backups[0];
+    const unbacked = State.sources.reduce((s, x) => s + x.unbackedChanges, 0);
+
+    const bySource = State.sources.map(src => {
+      const bks = Backups.forSource(src.id);
+      const size = bks.reduce((s, b) => s + b.compressedSize, 0);
+      return { src, count: bks.length, size };
+    });
+    const maxSize = Math.max(...bySource.map(x => x.size), 1);
+
+    const recentLog = State.log.slice(0, 6);
+
+    return `
+      <div class="flex items-end justify-between mb-8 gap-4 flex-wrap">
+        <div>
+          <h1 class="text-2xl font-semibold tracking-tight">Overview</h1>
+          <p class="text-sm text-stone-500 mt-1">System health and backup status</p>
+        </div>
+        ${Auth.can('backup.create') ? `
+          <button id="backupAllBtn" class="inline-flex items-center gap-2 bg-white hover:bg-stone-200 text-black font-medium px-4 py-2 rounded-lg text-sm transition-colors">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h9l5 5v13H5z"/><path d="M14 3v5h5"/></svg>
+            Backup all sources
+          </button>
+        ` : ''}
+      </div>
+
+      <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+        ${this._stat('Total backups', totalBackups, 'from-accent/10')}
+        ${this._stat('Healthy', healthy + ' / ' + totalBackups, 'from-emerald-500/10')}
+        ${this._stat('Compression saved', ratio + '%', 'from-amber-500/10')}
+        ${this._stat('Unbacked changes', unbacked, unbacked > 0 ? 'from-red-500/10' : 'from-purple-500/10')}
+      </div>
+
+      <div class="grid lg:grid-cols-2 gap-4 mb-4">
+        <div class="surface rounded-xl p-6">
+          <h2 class="text-sm font-medium text-stone-200 mb-5">Storage per source</h2>
+          <div class="space-y-4">
+            ${bySource.map(x => `
+              <div>
+                <div class="flex justify-between text-xs mb-1.5">
+                  <span class="text-stone-300">${U.esc(x.src.name)}</span>
+                  <span class="text-stone-500 font-mono">${x.count} bk · ${U.bytes(x.size)}</span>
+                </div>
+                <div class="h-1.5 bg-white/[0.04] rounded-full overflow-hidden">
+                  <div class="h-full bg-gradient-to-r from-accent to-[#8b7cff] rounded-full transition-all" style="width:${(x.size / maxSize) * 100}%"></div>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+          <div class="mt-6 pt-5 border-t border-white/[0.05] flex items-center justify-between text-xs">
+            <span class="text-stone-500 font-mono">Total compressed: ${U.bytes(totalComp)}</span>
+            <span class="text-stone-500 font-mono">Total raw: ${U.bytes(totalRaw)}</span>
+          </div>
+        </div>
+
+        <div class="surface rounded-xl p-6">
+          <h2 class="text-sm font-medium text-stone-200 mb-5">Source health</h2>
+          <div class="space-y-3">
+            ${State.sources.map(src => {
+              const last = Backups.forSource(src.id)[0];
+              const stale = !last || (Date.now() - last.createdAt > 86400000);
+              return `
+                <div class="flex items-center justify-between py-2.5 border-b border-white/[0.04] last:border-0">
+                  <div class="min-w-0 flex-1">
+                    <div class="text-[13px] text-stone-200">${U.esc(src.name)}</div>
+                    <div class="text-[11px] text-stone-500 font-mono">
+                      ${src.rows.length} rows · ${last ? 'last backup ' + U.time(last.createdAt) : 'never backed up'}
+                    </div>
+                  </div>
+                  <div class="ml-4 shrink-0">
+                    ${src.unbackedChanges > 0
+                      ? `<span class="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded bg-amber-500/10 text-amber-300">${src.unbackedChanges} changes</span>`
+                      : stale
+                        ? `<span class="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded bg-red-500/10 text-red-300">stale</span>`
+                        : `<span class="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-300">healthy</span>`
+                    }
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+      </div>
+
+      <div class="surface rounded-xl overflow-hidden">
+        <div class="p-5 border-b border-white/[0.06] flex items-center justify-between">
+          <h2 class="text-sm font-medium text-stone-200">Recent activity</h2>
+          <a href="#" data-view="log" class="text-[11px] text-stone-500 hover:text-stone-200 transition-colors">View all →</a>
+        </div>
+        ${recentLog.length === 0 ? UI.empty('No activity yet') : `
+          <div class="divide-y divide-white/[0.04]">
+            ${recentLog.map(l => `
+              <div class="flex items-center gap-3 px-5 py-3 text-xs">
+                ${this._logDot(l.level)}
+                <span class="text-stone-400 font-mono w-24 shrink-0">${U.time(l.ts)}</span>
+                <span class="text-stone-300 flex-1 truncate">${U.esc(l.message)}</span>
+                <span class="text-stone-600 font-mono">${U.esc(l.category)}</span>
+              </div>
+            `).join('')}
+          </div>
+        `}
+      </div>
+    `;
+  },
+
+  _stat(label, value, gradient) {
+    return `
+      <div class="surface surface-hover rounded-xl p-5 relative overflow-hidden transition-colors">
+        <div class="absolute -top-8 -right-8 w-24 h-24 rounded-full bg-gradient-to-br ${gradient} to-transparent blur-2xl"></div>
+        <div class="relative">
+          <div class="text-[11px] font-mono uppercase tracking-wider text-stone-500">${U.esc(label)}</div>
+          <div class="text-2xl font-semibold text-stone-50 mt-3 tracking-tight">${value}</div>
+        </div>
+      </div>
+    `;
+  },
+
+  _logDot(level) {
+    const colors = {
+      info: 'bg-stone-500',
+      success: 'bg-emerald-400',
+      warn: 'bg-amber-400',
+      error: 'bg-red-400'
+    };
+    return `<span class="w-1.5 h-1.5 rounded-full ${colors[level]} shrink-0"></span>`;
+  },
+
+  /* --------- Sources --------- */
+  sources() {
+    const canMutate = Auth.can('source.mutate');
+    const canBackup = Auth.can('backup.create');
+
+    return `
+      <div class="flex items-end justify-between mb-8 gap-4 flex-wrap">
+        <div>
+          <h1 class="text-2xl font-semibold tracking-tight">Data Sources</h1>
+          <p class="text-sm text-stone-500 mt-1">Systems under backup protection</p>
+        </div>
+      </div>
+
+      <div class="grid md:grid-cols-3 gap-4">
+        ${State.sources.map(src => {
+          const bks = Backups.forSource(src.id);
+          const last = bks[0];
+          const fulls = bks.filter(b => b.type === 'full').length;
+          const diffs = bks.filter(b => b.type === 'diff').length;
+          return `
+            <div class="surface rounded-xl p-6 flex flex-col">
+              <div class="flex items-start justify-between mb-5">
+                <div class="w-10 h-10 rounded-lg bg-gradient-to-br from-accent to-[#8b7cff] flex items-center justify-center">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#08090a" stroke-width="2" stroke-linecap="round">
+                    <ellipse cx="12" cy="6" rx="8" ry="3"/>
+                    <path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/>
+                  </svg>
+                </div>
+                ${src.unbackedChanges > 0
+                  ? `<span class="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded bg-amber-500/10 text-amber-300">${src.unbackedChanges} unbacked</span>`
+                  : `<span class="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-300">clean</span>`
+                }
+              </div>
+
+              <h3 class="text-stone-50 font-medium text-lg tracking-tight mb-1">${U.esc(src.name)}</h3>
+              <div class="text-[11px] text-stone-500 font-mono mb-5">${src.rows.length} rows · ${fulls} full · ${diffs} diff</div>
+
+              <div class="space-y-2 text-xs mb-5 pt-4 border-t border-white/[0.05]">
+                <div class="flex justify-between">
+                  <span class="text-stone-500">Last modified</span>
+                  <span class="text-stone-300 font-mono">${U.time(src.lastModified)}</span>
+                </div>
+                <div class="flex justify-between">
+                  <span class="text-stone-500">Last backup</span>
+                  <span class="text-stone-300 font-mono">${last ? U.time(last.createdAt) : 'never'}</span>
+                </div>
+                <div class="flex justify-between">
+                  <span class="text-stone-500">Total backups</span>
+                  <span class="text-stone-300 font-mono">${bks.length}</span>
+                </div>
+              </div>
+
+              <div class="mt-auto pt-4 flex flex-wrap gap-2">
+                ${canBackup ? `
+                  <button data-backup-src="${src.id}" data-type="full" class="flex-1 text-[12px] bg-white hover:bg-stone-200 text-black font-medium py-2 rounded-lg transition-colors">
+                    Full backup
+                  </button>
+                  <button data-backup-src="${src.id}" data-type="diff" class="flex-1 text-[12px] text-stone-300 hover:text-white border border-white/[0.09] hover:border-white/[0.18] py-2 rounded-lg transition-colors">
+                    Diff
+                  </button>
+                ` : ''}
+                ${canMutate ? `
+                  <button data-mutate-src="${src.id}" class="text-[12px] text-stone-400 hover:text-amber-300 py-2 px-3 rounded-lg hover:bg-amber-500/10 transition-colors" title="Simulate live changes">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="inline"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/></svg>
+                    Mutate
+                  </button>
+                ` : ''}
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+
+      <div class="surface rounded-xl p-6 mt-4">
+        <h3 class="text-sm font-medium text-stone-200 mb-3">How this works</h3>
+        <p class="text-xs text-stone-500 leading-relaxed">
+          Click <strong class="text-stone-300">Mutate</strong> to simulate live changes to a source system. Then create a <strong class="text-stone-300">Full</strong> or <strong class="text-stone-300">Differential</strong> backup to capture the state. Restore from any backup in the Restore tab to see the source revert.
+        </p>
+      </div>
+    `;
+  },
+
+  /* --------- Backups --------- */
+  backups() {
+    const all = Backups.all();
+    const filterType = this._backupType || 'all';
+    const filterSource = this._backupSource || 'all';
+
+    const filtered = all.filter(b => {
+      if (filterType !== 'all' && b.type !== filterType) return false;
+      if (filterSource !== 'all' && b.sourceId !== filterSource) return false;
+      return true;
+    });
+
+    const canDelete = Auth.can('backup.delete');
+    const canCorrupt = Auth.can('backup.corrupt');
+
+    return `
+      <div class="flex items-end justify-between mb-8 gap-4 flex-wrap">
+        <div>
+          <h1 class="text-2xl font-semibold tracking-tight">Backups</h1>
+          <p class="text-sm text-stone-500 mt-1">${filtered.length} of ${all.length} backups · ${U.bytes(Backups.totalSize())} compressed</p>
+        </div>
+      </div>
+
+      <div class="surface rounded-xl p-4 mb-4 flex flex-wrap gap-3">
+        <select id="filterType" class="bg-white/[0.02] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-stone-100 outline-none">
+          <option value="all"  ${filterType === 'all'  ? 'selected' : ''}>All types</option>
+          <option value="full" ${filterType === 'full' ? 'selected' : ''}>Full only</option>
+          <option value="diff" ${filterType === 'diff' ? 'selected' : ''}>Differential only</option>
+        </select>
+        <select id="filterSource" class="bg-white/[0.02] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-stone-100 outline-none">
+          <option value="all" ${filterSource === 'all' ? 'selected' : ''}>All sources</option>
+          ${State.sources.map(s => `<option value="${s.id}" ${filterSource === s.id ? 'selected' : ''}>${U.esc(s.name)}</option>`).join('')}
+        </select>
+      </div>
+
+      ${filtered.length === 0 ? UI.empty('No backups found', 'Create a backup from the Sources tab or change filters.') : `
+        <div class="surface rounded-xl overflow-hidden">
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead class="text-[11px] font-mono uppercase tracking-wider text-stone-500">
+                <tr class="border-b border-white/[0.06]">
+                  <th class="text-left px-5 py-3 font-normal">ID</th>
+                  <th class="text-left px-5 py-3 font-normal">Source</th>
+                  <th class="text-left px-5 py-3 font-normal">Type</th>
+                  <th class="text-left px-5 py-3 font-normal">Created</th>
+                  <th class="text-right px-5 py-3 font-normal">Rows</th>
+                  <th class="text-right px-5 py-3 font-normal">Size</th>
+                  <th class="text-right px-5 py-3 font-normal">Saved</th>
+                  <th class="text-left px-5 py-3 font-normal">Checksum</th>
+                  <th class="text-left px-5 py-3 font-normal">Status</th>
+                  <th class="text-right px-5 py-3 font-normal">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${filtered.map(b => {
+                  const saved = b.rawSize ? Math.round((1 - b.compressedSize / b.rawSize) * 100) : 0;
+                  return `
+                    <tr class="border-b border-white/[0.04] last:border-0 hover:bg-white/[0.015] transition-colors">
+                      <td class="px-5 py-3 font-mono text-[11px] text-stone-500">${b.id.slice(3, 11)}</td>
+                      <td class="px-5 py-3 text-stone-200">${U.esc(b.sourceName)}</td>
+                      <td class="px-5 py-3">${UI.typeBadge(b.type)}</td>
+                      <td class="px-5 py-3 text-stone-400 text-xs whitespace-nowrap">${U.time(b.createdAt)}</td>
+                      <td class="px-5 py-3 text-right text-stone-300 font-mono text-xs">${b.rows}</td>
+                      <td class="px-5 py-3 text-right text-stone-300 font-mono text-xs whitespace-nowrap">${U.bytes(b.compressedSize)}</td>
+                      <td class="px-5 py-3 text-right text-emerald-400/90 font-mono text-xs">${saved}%</td>
+                      <td class="px-5 py-3 font-mono text-[11px] text-stone-500" title="${b.checksum}">${U.shortHash(b.checksum)}</td>
+                      <td class="px-5 py-3">${UI.statusBadge(b.status)}</td>
+                      <td class="px-5 py-3 text-right">
+                        <div class="inline-flex gap-1">
+                          ${canCorrupt ? `
+                            <button data-corrupt="${b.id}" class="w-7 h-7 rounded-md text-stone-500 hover:text-amber-400 hover:bg-amber-500/10 flex items-center justify-center transition-colors" title="Simulate corruption">
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 9v4M12 17h.01"/><circle cx="12" cy="12" r="9"/></svg>
+                            </button>
+                          ` : ''}
+                          ${canDelete ? `
+                            <button data-del-backup="${b.id}" class="w-7 h-7 rounded-md text-stone-500 hover:text-red-400 hover:bg-red-500/10 flex items-center justify-center transition-colors" title="Delete">
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>
+                            </button>
+                          ` : ''}
+                        </div>
+                      </td>
+                    </tr>
+                  `;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `}
+    `;
+  },
+
+  /* --------- Restore --------- */
+  restore() {
+    const selectedSource = this._restoreSource || State.sources[0]?.id;
+    const src = Sources.get(selectedSource);
+    const backups = Backups.forSource(selectedSource).slice(0, 20);
+    const canRestore = Auth.can('restore.run');
+
+    return `
+      <div class="flex items-end justify-between mb-8 gap-4 flex-wrap">
+        <div>
+          <h1 class="text-2xl font-semibold tracking-tight">Restore</h1>
+          <p class="text-sm text-stone-500 mt-1">Roll back a source to a previous point in time</p>
+        </div>
+      </div>
+
+      <div class="surface rounded-xl p-4 mb-4">
+        <label class="block text-[10px] font-mono uppercase tracking-widest text-stone-500 mb-2">Select source</label>
+        <select id="restoreSource" class="w-full bg-white/[0.02] border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-stone-100 outline-none">
+          ${State.sources.map(s => `<option value="${s.id}" ${s.id === selectedSource ? 'selected' : ''}>${U.esc(s.name)} — currently ${s.rows.length} rows</option>`).join('')}
+        </select>
+      </div>
+
+      ${!src ? UI.empty('No sources available') : backups.length === 0
+        ? UI.empty('No backups for this source', 'Create a backup first from the Sources tab.')
+        : `
+          <div class="surface rounded-xl overflow-hidden">
+            <div class="p-5 border-b border-white/[0.06]">
+              <h2 class="text-sm font-medium text-stone-200">Recovery timeline — ${U.esc(src.name)}</h2>
+              <p class="text-[11px] text-stone-500 mt-1">Click any backup to restore the source to that state</p>
+            </div>
+            <div class="p-5 space-y-3">
+              ${backups.map((b, i) => {
+                const isLatest = i === 0;
+                const offsetRows = b.rows - src.rows.length;
+                return `
+                  <div class="relative pl-6">
+                    <div class="absolute left-0 top-2 w-2 h-2 rounded-full timeline-dot ${b.type === 'full' ? 'bg-accent' : 'bg-purple-400'}"></div>
+                    ${i < backups.length - 1 ? `<div class="absolute left-[3px] top-4 bottom-[-12px] w-px bg-white/[0.06]"></div>` : ''}
+                    <div class="surface rounded-lg p-4 flex items-center justify-between gap-4 hover:border-white/[0.14] transition-colors">
+                      <div class="min-w-0 flex-1">
+                        <div class="flex items-center gap-2.5 mb-1.5 flex-wrap">
+                          ${UI.typeBadge(b.type)}
+                          ${isLatest ? '<span class="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-300">Latest</span>' : ''}
+                          ${UI.statusBadge(b.status)}
+                        </div>
+                        <div class="text-[13px] text-stone-100">${U.date(b.createdAt)}</div>
+                        <div class="text-[11px] text-stone-500 font-mono mt-1">
+                          ${b.rows} rows · ${U.bytes(b.compressedSize)} · ${U.shortHash(b.checksum)}
+                        </div>
+                      </div>
+                      ${canRestore ? `
+                        <button data-restore="${b.id}" class="shrink-0 text-[12px] font-medium bg-white hover:bg-stone-200 text-black px-4 py-2 rounded-lg transition-colors">
+                          Restore
+                        </button>
+                      ` : '<span class="text-[11px] text-stone-600">Read only</span>'}
+                    </div>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          </div>
+        `}
+    `;
+  },
+
+  /* --------- Verify --------- */
+  verify() {
+    const results = this._verifyResults;
+    const canVerify = Auth.can('backup.verify');
+
+    return `
+      <div class="flex items-end justify-between mb-8 gap-4 flex-wrap">
+        <div>
+          <h1 class="text-2xl font-semibold tracking-tight">Integrity Verification</h1>
+          <p class="text-sm text-stone-500 mt-1">Re-hash each backup and compare with its stored SHA-256 checksum</p>
+        </div>
+        ${canVerify && State.backups.length > 0 ? `
+          <button id="verifyAllBtn" class="inline-flex items-center gap-2 bg-white hover:bg-stone-200 text-black font-medium px-4 py-2 rounded-lg text-sm transition-colors">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="9"/></svg>
+            Verify all backups
+          </button>
+        ` : ''}
+      </div>
+
+      ${!results ? `
+        <div class="surface rounded-xl p-8">
+          <div class="text-center max-w-md mx-auto">
+            <div class="w-12 h-12 rounded-xl bg-accent/[0.08] border border-accent/20 flex items-center justify-center mx-auto mb-4">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" class="text-accent-soft">
+                <path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="9"/>
+              </svg>
+            </div>
+            <h3 class="text-stone-200 font-medium mb-2">Integrity check</h3>
+            <p class="text-xs text-stone-500 leading-relaxed">
+              Click <strong class="text-stone-300">Verify all backups</strong> to recompute the SHA-256 hash of each backup's stored content and compare it to the checksum captured at creation time. Any mismatch means the backup has been corrupted or tampered with.
+            </p>
+          </div>
+        </div>
+      ` : `
+        <div class="grid sm:grid-cols-4 gap-3 mb-4">
+          ${this._stat('Checked', results.length, 'from-accent/10')}
+          ${this._stat('Passed', results.filter(r => r.ok).length, 'from-emerald-500/10')}
+          ${this._stat('Failed', results.filter(r => !r.ok).length, 'from-red-500/10')}
+          ${this._stat('Integrity', Math.round((results.filter(r => r.ok).length / results.length) * 100) + '%', 'from-purple-500/10')}
+        </div>
+
+        <div class="surface rounded-xl overflow-hidden">
+          <table class="w-full text-sm">
+            <thead class="text-[11px] font-mono uppercase tracking-wider text-stone-500">
+              <tr class="border-b border-white/[0.06]">
+                <th class="text-left px-5 py-3 font-normal">Backup</th>
+                <th class="text-left px-5 py-3 font-normal">Source</th>
+                <th class="text-left px-5 py-3 font-normal">Type</th>
+                <th class="text-left px-5 py-3 font-normal">Result</th>
+                <th class="text-left px-5 py-3 font-normal">Hash comparison</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${results.map(r => `
+                <tr class="border-b border-white/[0.04] last:border-0">
+                  <td class="px-5 py-3 font-mono text-[11px] text-stone-500">${r.id.slice(3, 11)}</td>
+                  <td class="px-5 py-3 text-stone-200">${U.esc(r.source)}</td>
+                  <td class="px-5 py-3">${UI.typeBadge(r.type)}</td>
+                  <td class="px-5 py-3">
+                    ${r.ok
+                      ? '<span class="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-300">PASS</span>'
+                      : '<span class="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded bg-red-500/10 text-red-300">FAIL</span>'}
+                  </td>
+                  <td class="px-5 py-3 text-[11px] font-mono text-stone-500 break-all">
+                    ${r.ok
+                      ? U.shortHash(r.expected)
+                      : `<div class="text-red-400">expected ${U.shortHash(r.expected)}</div><div class="text-red-400">got&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;${U.shortHash(r.actual || '—')}</div>`}
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `}
+    `;
+  },
+
+  /* --------- Schedule --------- */
+  schedule() {
+    const canManage = Auth.can('schedule.manage');
+    const canRun = Auth.can('backup.create');
+
+    return `
+      <div class="flex items-end justify-between mb-8 gap-4 flex-wrap">
+        <div>
+          <h1 class="text-2xl font-semibold tracking-tight">Scheduled Backups</h1>
+          <p class="text-sm text-stone-500 mt-1">Automated backup jobs with retention policy</p>
+        </div>
+      </div>
+
+      ${State.schedules.length === 0 ? UI.empty('No schedules configured') : `
+        <div class="space-y-3">
+          ${State.schedules.map(s => {
+            const src = Sources.get(s.sourceId);
+            return `
+              <div class="surface rounded-xl p-5 flex items-center gap-5 flex-wrap">
+                <div class="w-10 h-10 rounded-lg ${s.enabled ? 'bg-gradient-to-br from-accent to-[#8b7cff]' : 'bg-white/[0.04]'} flex items-center justify-center shrink-0">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="${s.enabled ? '#08090a' : '#666'}" stroke-width="2" stroke-linecap="round">
+                    <rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 10h18M8 2v4M16 2v4"/>
+                  </svg>
+                </div>
+
+                <div class="flex-1 min-w-[200px]">
+                  <div class="flex items-center gap-2 mb-1">
+                    <h3 class="text-stone-50 font-medium">${U.esc(src ? src.name : 'Unknown source')}</h3>
+                    ${UI.typeBadge(s.type)}
+                  </div>
+                  <div class="text-[11px] text-stone-500 font-mono">
+                    ${s.interval} · keep last ${s.retention} fulls
+                  </div>
+                </div>
+
+                <div class="text-xs">
+                  <div class="text-stone-500">Last run</div>
+                  <div class="text-stone-300 font-mono mt-0.5">${s.lastRun ? U.time(s.lastRun) : 'never'}</div>
+                </div>
+
+                <div class="text-xs">
+                  <div class="text-stone-500">Next run</div>
+                  <div class="text-stone-300 font-mono mt-0.5">${s.enabled && s.nextRun ? U.time(s.nextRun) : '—'}</div>
+                </div>
+
+                <div class="flex items-center gap-2 ml-auto">
+                  ${canRun ? `
+                    <button data-run-schedule="${s.id}" class="text-[12px] text-stone-400 hover:text-accent-soft px-3 py-2 rounded-lg hover:bg-accent/[0.08] transition-colors">
+                      Run now
+                    </button>
+                  ` : ''}
+                  ${canManage ? `
+                    <button data-toggle-schedule="${s.id}" class="relative w-10 h-6 rounded-full transition-colors ${s.enabled ? 'bg-accent' : 'bg-white/[0.08]'}" title="${s.enabled ? 'Disable' : 'Enable'}">
+                      <span class="absolute top-0.5 ${s.enabled ? 'left-5' : 'left-0.5'} w-5 h-5 rounded-full bg-white transition-all"></span>
+                    </button>
+                  ` : `
+                    <span class="text-[11px] font-mono uppercase tracking-wider px-2 py-0.5 rounded ${s.enabled ? 'bg-emerald-500/10 text-emerald-300' : 'bg-white/[0.04] text-stone-500'}">${s.enabled ? 'on' : 'off'}</span>
+                  `}
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      `}
+
+      <div class="surface rounded-xl p-6 mt-4">
+        <h3 class="text-sm font-medium text-stone-200 mb-3">About retention</h3>
+        <p class="text-xs text-stone-500 leading-relaxed">
+          Each source keeps its <strong class="text-stone-300">last 3 full backups</strong> plus any differentials that depend on them. Older fulls (and their diffs) are automatically pruned after each new backup. This keeps storage bounded while preserving a rolling history.
+        </p>
+      </div>
+    `;
+  },
+
+  /* --------- Activity Log --------- */
+  log() {
+    const levelFilter = this._logLevel || 'all';
+    const filtered = levelFilter === 'all' ? State.log : State.log.filter(l => l.level === levelFilter);
+
+    return `
+      <div class="flex items-end justify-between mb-8 gap-4 flex-wrap">
+        <div>
+          <h1 class="text-2xl font-semibold tracking-tight">Activity Log</h1>
+          <p class="text-sm text-stone-500 mt-1">${filtered.length} of ${State.log.length} entries</p>
+        </div>
+      </div>
+
+      <div class="surface rounded-xl p-4 mb-4 flex flex-wrap gap-2">
+        ${['all', 'info', 'success', 'warn', 'error'].map(l => `
+          <button data-log-level="${l}" class="text-[12px] px-3 py-1.5 rounded-md transition-colors ${
+            levelFilter === l
+              ? 'bg-white text-black font-medium'
+              : 'text-stone-400 hover:text-stone-100 border border-white/[0.06]'
+          }">${l === 'all' ? 'All' : l.charAt(0).toUpperCase() + l.slice(1)}</button>
+        `).join('')}
+      </div>
+
+      ${filtered.length === 0 ? UI.empty('No log entries') : `
+        <div class="surface rounded-xl overflow-hidden">
+          <div class="divide-y divide-white/[0.04]">
+            ${filtered.slice(0, 200).map(l => `
+              <div class="flex items-center gap-4 px-5 py-3 text-xs">
+                ${this._logDot(l.level)}
+                <span class="text-stone-400 font-mono w-32 shrink-0">${U.date(l.ts).slice(5)}</span>
+                <span class="text-stone-300 flex-1">${U.esc(l.message)}</span>
+                <span class="text-stone-600 font-mono shrink-0">${U.esc(l.category)}</span>
+              </div>
+            `).join('')}
+          </div>
+          ${filtered.length > 200 ? `<div class="px-5 py-3 text-[11px] text-stone-500 border-t border-white/[0.06]">Showing first 200 of ${filtered.length} entries</div>` : ''}
+        </div>
+      `}
+    `;
+  },
+
+  _logDot(level) {
+    const colors = { info: 'bg-stone-500', success: 'bg-emerald-400', warn: 'bg-amber-400', error: 'bg-red-400' };
+    return `<span class="w-1.5 h-1.5 rounded-full ${colors[level]} shrink-0"></span>`;
+  }
+};
+
+/* ========== ROUTER ========== */
+const App = {
+  currentView: 'overview',
+
+  render() {
+    // Sidebar nav
+    document.getElementById('nav').innerHTML = NAV.map(item => `
+      <a href="#" data-view="${item.id}" class="nav-item flex items-center gap-3 px-5 py-2.5 text-[13px] text-stone-400 ${this.currentView === item.id ? 'active' : ''}">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${item.icon}</svg>
+        ${U.esc(item.label)}
+      </a>
+    `).join('');
+
+    // User card
+    const user = Auth.current;
+    if (user) {
+      document.getElementById('userCard').innerHTML = `
+        <div class="flex items-center gap-2.5">
+          <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-accent to-[#8b7cff] flex items-center justify-center text-black font-semibold text-xs shrink-0">
+            ${U.esc(user.name[0])}
+          </div>
+          <div class="min-w-0 flex-1">
+            <div class="text-[12px] text-stone-200 font-medium truncate">${U.esc(user.name)}</div>
+            <div class="text-[10px] text-stone-500 font-mono truncate">@${U.esc(user.username)}</div>
+          </div>
+        </div>
+        <div class="mt-2.5 flex items-center justify-between">
+          ${UI.roleBadge(user.role)}
+          <button id="logoutBtn" class="text-[11px] text-stone-500 hover:text-stone-100 transition-colors">Sign out</button>
+        </div>
+      `;
+    }
+
+    // Breadcrumb
+    const current = NAV.find(n => n.id === this.currentView);
+    document.getElementById('breadcrumb').textContent = current ? current.label : '';
+
+    // Storage indicator
+    document.getElementById('storageIndicator').textContent = U.bytes(Backups.totalSize()) + ' stored';
+
+    // Main
+    const main = document.getElementById('main');
+    main.innerHTML = Views[this.currentView] ? Views[this.currentView]() : UI.empty('Not found');
+
+    this.bind();
+  },
+
+  navigate(view) {
+    if (!Views[view]) return;
+    this.currentView = view;
+    this.render();
+  },
+
+  bind() {
+    // Nav links
+    document.querySelectorAll('[data-view]').forEach(el => {
+      el.addEventListener('click', e => { e.preventDefault(); this.navigate(el.dataset.view); });
+    });
+
+    // Logout
+    document.getElementById('logoutBtn')?.addEventListener('click', () => {
+      Auth.logout();
+      document.getElementById('app').classList.add('hidden');
+      document.getElementById('loginScreen').classList.remove('hidden');
+      document.getElementById('loginScreen').classList.add('flex');
+    });
+
+    // Reset all
+    document.getElementById('resetAllBtn')?.addEventListener('click', () => {
+      if (!Auth.can('data.reset')) { UI.toast('Only administrators can reset all data', 'error'); return; }
+      UI.confirm('Reset everything? All sources, backups, and logs will be re-seeded.', async () => {
+        Store.clear();
+        await initState();
+        Log.warn('system', 'All data reset by ' + Auth.current.username);
+        Store.save(State);
+        UI.toast('System reset to defaults', 'success');
+        this.render();
+      }, { confirmLabel: 'Reset', danger: true });
+    });
+
+    // Backup all
+    document.getElementById('backupAllBtn')?.addEventListener('click', async () => {
+      if (!Auth.can('backup.create')) return;
+      UI.toast('Running full backups for all sources…', 'info');
+      for (const src of State.sources) {
+        await Backups.create(src.id, 'full');
+      }
+      UI.toast('All sources backed up', 'success');
+      this.render();
+    });
+
+    // Sources: backup buttons
+    document.querySelectorAll('[data-backup-src]').forEach(el => {
+      el.addEventListener('click', async () => {
+        const srcId = el.dataset.backupSrc;
+        const type = el.dataset.type;
+        el.disabled = true;
+        el.classList.add('running');
+        try {
+          await Backups.create(srcId, type);
+          UI.toast(type === 'full' ? 'Full backup created' : 'Differential backup created', 'success');
+          this.render();
+        } catch (e) {
+          UI.toast(e.message, 'error');
+        }
+      });
+    });
+
+    // Sources: mutate buttons
+    document.querySelectorAll('[data-mutate-src]').forEach(el => {
+      el.addEventListener('click', async () => {
+        const srcId = el.dataset.mutateSrc;
+        await Sources.mutate(srcId, 5);
+        UI.toast('Source data mutated — new unbacked changes present', 'warn');
+        this.render();
+      });
+    });
+
+    // Backups: filters
+    document.getElementById('filterType')?.addEventListener('change', e => {
+      Views._backupType = e.target.value;
+      this.render();
+    });
+    document.getElementById('filterSource')?.addEventListener('change', e => {
+      Views._backupSource = e.target.value;
+      this.render();
+    });
+
+    // Backups: delete + corrupt
+    document.querySelectorAll('[data-del-backup]').forEach(el => {
+      el.addEventListener('click', () => {
+        const id = el.dataset.delBackup;
+        const b = Backups.get(id);
+        UI.confirm(`Delete backup ${id.slice(3, 11)}? Any differential backups that depend on it will also be removed.`, async () => {
+          await Backups.delete(id);
+          UI.toast('Backup deleted', 'success');
+          this.render();
+        });
+      });
+    });
+    document.querySelectorAll('[data-corrupt]').forEach(el => {
+      el.addEventListener('click', async () => {
+        await Backups.corrupt(el.dataset.corrupt);
+        UI.toast('Simulated corruption — run verification to detect it', 'warn');
+        this.render();
+      });
+    });
+
+    // Restore
+    document.getElementById('restoreSource')?.addEventListener('change', e => {
+      Views._restoreSource = e.target.value;
+      this.render();
+    });
+    document.querySelectorAll('[data-restore]').forEach(el => {
+      el.addEventListener('click', () => {
+        const id = el.dataset.restore;
+        const b = Backups.get(id);
+        const src = Sources.get(b.sourceId);
+        UI.confirm(
+          `Restore "${src.name}" to ${b.type} backup from ${U.date(b.createdAt)}? Current data (${src.rows.length} rows) will be replaced.`,
+          async () => {
+            try {
+              const r = await Backups.restore(id);
+              UI.toast(`Restored — ${r.rows} rows`, 'success');
+              this.render();
+            } catch (e) {
+              UI.toast('Restore failed: ' + e.message, 'error');
+            }
+          },
+          { title: 'Confirm restore', confirmLabel: 'Restore', danger: false }
+        );
+      });
+    });
+
+    // Verify
+    document.getElementById('verifyAllBtn')?.addEventListener('click', async () => {
+      const btn = document.getElementById('verifyAllBtn');
+      btn.disabled = true;
+      btn.classList.add('running');
+      UI.toast('Verifying ' + State.backups.length + ' backups…', 'info');
+      const results = await Backups.verifyAll();
+      Views._verifyResults = results;
+      const failed = results.filter(r => !r.ok).length;
+      if (failed === 0) UI.toast('All backups passed integrity check', 'success');
+      else UI.toast(failed + ' backup(s) FAILED — see report', 'error');
+      this.render();
+    });
+
+    // Schedule
+    document.querySelectorAll('[data-toggle-schedule]').forEach(el => {
+      el.addEventListener('click', () => {
+        Scheduler.toggle(el.dataset.toggleSchedule);
+        this.render();
+      });
+    });
+    document.querySelectorAll('[data-run-schedule]').forEach(el => {
+      el.addEventListener('click', async () => {
+        const btn = el;
+        btn.disabled = true;
+        btn.textContent = 'Running…';
+        try {
+          await Scheduler.runNow(el.dataset.runSchedule);
+          UI.toast('Scheduled backup completed', 'success');
+          this.render();
+        } catch (e) {
+          UI.toast(e.message, 'error');
+          btn.disabled = false;
+        }
+      });
+    });
+
+    // Log filter
+    document.querySelectorAll('[data-log-level]').forEach(el => {
+      el.addEventListener('click', () => {
+        Views._logLevel = el.dataset.logLevel;
+        this.render();
+      });
+    });
+  }
+};
+
+/* ========== BOOT ========== */
+async function initState() {
+  State.backups = [];
+  State.log = [];
+  Sources.init();
+  Scheduler.init();
+  await Auth.initUsers();
+}
+
+(async function boot() {
+  try {
+    const saved = Store.load();
+
+    if (saved) {
+      State.sources = saved.sources || [];
+      State.backups = saved.backups || [];
+      State.schedules = saved.schedules || [];
+      State.log = saved.log || [];
+      State.users = saved.users || [];
+
+      // If the saved state is from a previous version without users, reseed
+      if (!State.users.length) {
+        await Auth.initUsers();
+        Store.save(State);
+      }
+
+      // Verify sources still have their rows (JSON restore)
+      if (!State.sources.length || !State.sources[0].rows) {
+        await initState();
+        Store.save(State);
+      }
+    } else {
+      await initState();
+      Log.info('system', 'System initialized with default sources');
+      Store.save(State);
+    }
+
+    // Login UI wiring
+    document.querySelectorAll('[data-fill]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const [u, p] = btn.dataset.fill.split(':');
+        document.getElementById('loginUser').value = u;
+        document.getElementById('loginPass').value = p;
+      });
+    });
+
+    document.getElementById('loginForm').addEventListener('submit', async e => {
+      e.preventDefault();
+      const user = document.getElementById('loginUser').value.trim();
+      const pass = document.getElementById('loginPass').value;
+      const errEl = document.getElementById('loginError');
+      errEl.classList.add('hidden');
+
+      const res = await Auth.login(user, pass);
+      if (!res.ok) {
+        errEl.textContent = res.error;
+        errEl.classList.remove('hidden');
+        return;
+      }
+
+      document.getElementById('loginScreen').classList.add('hidden');
+      document.getElementById('loginScreen').classList.remove('flex');
+      document.getElementById('app').classList.remove('hidden');
+      App.render();
+      UI.toast(`Signed in as ${Auth.current.name}`, 'success');
+    });
+
+    // Scheduler tick every 30 seconds
+    setInterval(() => { Scheduler.tick().then(() => App.render()); }, 30000);
+
+    document.getElementById('loading').classList.add('hidden');
+    document.getElementById('loginScreen').classList.remove('hidden');
+    document.getElementById('loginScreen').classList.add('flex');
+
+  } catch (err) {
+    console.error(err);
+    document.getElementById('loading').innerHTML = `
+      <div class="text-center max-w-md">
+        <div class="text-red-400 text-sm font-mono">Failed to initialize</div>
+        <div class="text-xs text-stone-500 mt-2">${U.esc(err.message)}</div>
+      </div>
+    `;
+  }
+})();
+</script>
+
+</body>
+</html>
